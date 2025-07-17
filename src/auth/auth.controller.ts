@@ -8,15 +8,20 @@ export class AuthController {
   private readonly logger = new Logger('AuthController');
   constructor(private readonly authService: AuthService) {}
 
-  @UseGuards(LdapAuthGuard)
+  // @UseGuards(LdapAuthGuard)
   @MessagePattern('auth.login')
   async login(@Payload() data: any) {
-    const jwt = await this.authService.generateJwt(data.user);
+    const user = {
+      uid: data.username,
+      cn: data.username, // O el nombre completo si lo obtienes de otra fuente
+    };
+
+    const jwt = await this.authService.generateJwt(user);
     return {
       access_token: jwt,
       user: {
-        username: data.user.uid,
-        name: data.user.cn,
+        username: user.uid,
+        name: user.cn,
       },
     };
   }
