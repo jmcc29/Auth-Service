@@ -23,6 +23,13 @@ interface EnvVars {
   API_KEY: string;
   PVTBE_USERNAME: string;
   PVTBE_PASSWORD: string;
+  KEYCLOAK_HOST: string;
+  KEYCLOAK_PORT: number;
+  KEYCLOAK_REALM: string;
+  KEYCLOAK_CLIENT_ID: string;
+  KEYCLOAK_CLIENT_SECRET: string;
+  KEYCLOAK_ADMIN_USERNAME: string;
+  KEYCLOAK_ADMIN_PASSWORD: string;
 }
 
 const envsSchema = joi
@@ -93,4 +100,20 @@ export const DbEnvs = {
   dbUsername: envVars.DB_USERNAME,
   dbSynchronize: envVars.DB_SYNCHRONIZE,
   dbSchema: envVars.DB_SCHEMA,
+};
+
+export const KeycloakEnvs = {
+  url: `http://${envVars.KEYCLOAK_HOST}:${envVars.KEYCLOAK_PORT}`,
+  host: envVars.KEYCLOAK_HOST,
+  port: envVars.KEYCLOAK_PORT,
+  realm: envVars.KEYCLOAK_REALM,
+  issuer: `http://${envVars.KEYCLOAK_HOST}:${envVars.KEYCLOAK_PORT}/realms/${envVars.KEYCLOAK_REALM}`,
+  clientId: envVars.KEYCLOAK_CLIENT_ID,
+  clientSecret: envVars.KEYCLOAK_CLIENT_SECRET,
+  adminUsername: envVars.KEYCLOAK_ADMIN_USERNAME,
+  adminPassword: envVars.KEYCLOAK_ADMIN_PASSWORD,
+  endpoint: {
+    token: `http://${envVars.KEYCLOAK_HOST}:${envVars.KEYCLOAK_PORT}/realms/${envVars.KEYCLOAK_REALM}/protocol/openid-connect/token`,
+    certs: `http://${envVars.KEYCLOAK_HOST}:${envVars.KEYCLOAK_PORT}/realms/${envVars.KEYCLOAK_REALM}/protocol/openid-connect/certs`,
+  },
 };

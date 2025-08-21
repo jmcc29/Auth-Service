@@ -1,38 +1,24 @@
-import { Controller, Logger, UseGuards } from '@nestjs/common';
-import { LdapAuthGuard } from './ldap-auth.guard';
-import { AuthService } from './auth.service';
+import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload } from '@nestjs/microservices';
+import { AuthService } from './auth.service';
+import { EvaluatePermissionDto, LoginLdapAuthDto, ValidateTokenDto } from './dto'; 
 
-@Controller('auth')
+@Controller()
 export class AuthController {
-  // private readonly logger = new Logger('AuthController');
-  // constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService) {}
 
-  // @UseGuards(LdapAuthGuard)
-  // @MessagePattern('auth.login')
-  // async login(@Payload() data: any) {
-  //   const jwt = await this.authService.generateJwt(data.user);
-  //   return {
-  //     access_token: jwt,
-  //     user: {
-  //       username: data.user.uid,
-  //       name: data.user.cn,
-  //     },
-  //   };
-  // }
+  @MessagePattern('ldap-auth.login')
+  create(@Payload() loginLdapDto: LoginLdapAuthDto) {
+    return this.authService.loginLdap(loginLdapDto);
+  }
 
-  // @MessagePattern('auth.verify.token')
-  // async verifyToken(@Payload() token: string) {
-  //   this.logger.debug('verify token');
-  //   const username = await this.authService.verifyToken(token);
-  //   return {
-  //     username,
-  //   };
-  // }
-
-  // @MessagePattern('auth.verify.apikey')
-  // async verifyApiKey(@Payload() apikey: string) {
-  //   this.logger.debug('verify apikey');
-  //   return await this.authService.verifyApiKey(apikey);
-  // }
+  @MessagePattern('ldap-auth.validateToken')
+  validateToken(@Payload() dto: ValidateTokenDto ) {
+    return this.authService.validateToken(dto);
+  }
+  
+  @MessagePattern('ldap-auth.evaluatePermission')
+  evaluatePermission(@Payload() dto: EvaluatePermissionDto) {
+    return this.authService.evaluatePermission(dto);
+  }
 }
