@@ -1,11 +1,23 @@
 import { Controller } from '@nestjs/common';
 import { MessagePattern, Payload, RpcException } from '@nestjs/microservices';
 import { AuthService } from './auth.service';
-import { LoginStartDto, LoginStartRes } from './dtos/login-start.dto';
-import { LoginExchangeDto, LoginExchangeRes } from './dtos/login-exchange.dto';
-import { SessionGetDto, SessionGetRes } from './dtos/session-get.dto';
-import { VerifyTokenDto, VerifyTokenRes } from './dtos/verify-token.dto';
-import { LogoutDto, LogoutRes } from './dtos/logout.dto';
+import {
+  LoginStartDto,
+  LoginStartRes,
+  LoginExchangeDto,
+  SessionGetDto,
+  SessionGetRes,
+  VerifyTokenDto,
+  VerifyTokenRes,
+  LogoutDto,
+  LogoutRes,
+  ProfileGetDto,
+  ProfileGetRes,
+  PermissionEvaluateDto,
+  PermissionEvaluateRes,
+  PermissionsListDto,
+  PermissionsListRes,
+} from './dtos';
 
 @Controller()
 export class AuthController {
@@ -54,4 +66,67 @@ export class AuthController {
     await this.auth.logout(dto.sid);
     return { ok: true };
   }
+
+  // @MessagePattern('auth.profile.get')
+  // async profileGet(@Payload() dto: ProfileGetDto): Promise<ProfileGetRes> {
+  //   try {
+  //     return await this.auth.getProfile(dto.sid, dto.clientId);
+  //   } catch (e: any) {
+  //     throw new RpcException(e?.message ?? 'PROFILE_LOOKUP_FAILED');
+  //   }
+  // }
+  @MessagePattern('auth.profile.get')
+  async profileGet(@Payload() dto: ProfileGetDto): Promise<ProfileGetRes> {
+    try {
+      return await this.auth.getProfileByCtx(dto.sid, {
+        clientId: dto.clientId,
+        origin: dto.origin,
+        referer: dto.referer,
+      });
+    } catch (e: any) {
+      throw new RpcException(e?.message ?? 'PROFILE_LOOKUP_FAILED');
+    }
+  }
+  @MessagePattern('auth.permissions.list')
+  async permissionsList(
+    @Payload() dto: PermissionsListDto,
+  ): Promise<PermissionsListRes> {
+    try {
+      const permissions = await this.auth.listPermissionsByCtx(dto.sid, {
+        audience: dto.audience,
+        clientId: dto.clientId,
+        origin: dto.origin,
+        referer: dto.referer,
+      });
+      return { ok: true, audience: dto.audience, permissions };
+    } catch (e: any) {
+      throw new RpcException(e?.message ?? 'PERMISSIONS_LIST_FAILED');
+    }
+  }
+
+  @MessagePattern('auth.permission.evaluate')
+  async permissionEvaluate(
+    @Payload() dto: PermissionEvaluateDto,
+  ): Promise<PermissionEvaluateRes> {
+    try {
+      const allowed = await this.auth.evaluatePermissionByCtx(dto.sid, {
+        audience: dto.audience,
+        resource: dto.resource,
+        scope: dto.scope,
+        clientId: dto.clientId,
+        origin: dto.origin,
+        referer: dto.referer,
+      });
+      return {
+        ok: true,
+        audience: dto.audience,
+        resource: dto.resource,
+        scope: dto.scope,
+        allowed,
+      };
+    } catch (e: any) {
+      throw new RpcException(e?.message ?? 'PERMISSION_EVALUATE_FAILED');
+    }
+  }
+
 }

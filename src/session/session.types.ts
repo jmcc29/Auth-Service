@@ -10,6 +10,12 @@ export type SessionData = {
   tokenType: string;
   sub?: string;
   clients: Record<string, ClientTokenSet>;
+  uma?: {
+    [audience: string]: {
+      items: string[];
+      fetchedAt: number;
+    }
+  }
 };
 
 export type PendingData = {

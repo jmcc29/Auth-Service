@@ -7,4 +7,18 @@ export type TokenResponse = {
   scope?: string;
   session_state?: string;
 };
+
 export type VerifyResult = { isValid: boolean; sub?: string; exp?: number; azp?: string };
+
+export type UmaPermissionsReq = {
+  accessToken: string;
+  audience: string;
+  responseMode: 'permissions';
+};
+
+export type UmaDecisionReq = {
+  accessToken: string;
+  audience: string;
+  responseMode: 'decision';
+  permission: string; // "rsname#scope"
+};

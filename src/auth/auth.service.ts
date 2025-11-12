@@ -10,10 +10,18 @@ import {
   logoutRequest,
 } from '../keycloak/kc-oidc.client';
 import { KcJwksService } from '../keycloak/kc-jwks.service';
-import { generatePkce } from './utils/pkce.util';
-import { originOf } from './utils/origins.util';
-import { randomId } from './utils/crypto.util';
-import { peekRoles, peekSub } from './utils/jwt.util';
+import {
+  resolveClientIdOrThrow,
+  randomId,
+  originOf,
+  generatePkce,
+  peekSub,
+  peekRoles,
+  peekUserProfile,
+  getAccessTokenForFrontendClient,
+  normalizeUmaPermissions,
+} from './utils';
+import { umaRequest } from 'src/keycloak/kc-uma.client';
 
 type ClientCfg = { id?: string; secret?: string };
 const ALLOWED_CLIENTS: Readonly<Record<string, { secret?: string }>> = (() => {
@@ -33,6 +41,8 @@ function ensureClientAllowed(clientId: string) {
   if (!clientId || !ALLOWED_CLIENTS[clientId])
     throw new Error(`client_id no permitido: ${clientId}`);
 }
+
+const UMA_PERMS_TTL_MS = 5 * 60 * 1000; // 
 
 @Injectable()
 export class AuthService {
@@ -162,15 +172,6 @@ export class AuthService {
     return this.jwks.verifyAccessToken(set.accessToken, allowed);
   }
 
-  async getProfile(sid: string, clientId: string) {
-    const s = await this.sessions.get(sid);
-    if (!s) throw new Error('Sesión inválida o expirada');
-    const set = s.clients?.[clientId];
-    if (!set?.accessToken) throw new Error('No hay access_token');
-    const sub = peekSub(set.accessToken);
-    return { sub };
-  }
-
   async logout(sid: string) {
     const s = await this.sessions.get(sid);
     if (!s) return;
@@ -184,5 +185,111 @@ export class AuthService {
     } finally {
       await this.sessions.del(sid);
     }
+  }
+
+  async getProfileByCtx(
+    sid: string,
+    ctx: { clientId?: string; origin?: string; referer?: string },
+  ) {
+    const { clientId } = resolveClientIdOrThrow(ctx);
+    return this.getProfile(sid, clientId); // reutiliza tu método actual
+  }
+
+  async getProfile(sid: string, clientId: string) {
+    const s = await this.sessions.get(sid);
+    if (!s) throw new Error('Sesión inválida o expirada');
+
+    const set = s.clients?.[clientId];
+    if (!set?.accessToken)
+      throw new Error('No hay access_token para el client_id solicitado');
+
+    // Perfil desde el access_token
+    const profile = peekUserProfile(set.accessToken);
+    const roles = set.roles ?? peekRoles(set.accessToken, clientId) ?? [];
+    const sub = s.sub ?? profile?.sub ?? peekSub(set.accessToken);
+
+    return {
+      ok: true as const,
+      clientId,
+      sub,
+      username: profile?.username,
+      name: profile?.name,
+      given_name: profile?.given_name,
+      family_name: profile?.family_name,
+      email: profile?.email,
+      roles,
+    };
+  }
+  /** Llama a UMA permissions (con cache por audience). */
+  async listPermissionsByCtx(
+    sid: string,
+    ctx: {
+      audience: string;
+      clientId?: string;
+      origin?: string;
+      referer?: string;
+    },
+  ): Promise<string[]> {
+    if (!ctx.audience) throw new Error('audience es obligatorio');
+
+    const { accessToken, session } = await getAccessTokenForFrontendClient(
+      sid,
+      ctx,
+    );
+
+    // Cache hit si no expiró
+    const now = Date.now();
+    const cached = session.uma?.[ctx.audience];
+    if (cached && now - cached.fetchedAt < UMA_PERMS_TTL_MS) {
+      return cached.items;
+    }
+
+    // Fetch UMA permissions
+    const raw = await umaRequest({
+      accessToken,
+      audience: ctx.audience,
+      responseMode: 'permissions',
+    });
+
+    const items = normalizeUmaPermissions(raw);
+
+    // Persistir en cache de la sesión
+    session.uma = session.uma ?? {};
+    session.uma[ctx.audience] = { items, fetchedAt: now };
+    await this.sessions.set(sid, session);
+
+    return items;
+  }
+
+  /** Llama a UMA decision para `${resource}#${scope}` (sin cache o con cache muy corto si quieres). */
+  async evaluatePermissionByCtx(
+    sid: string,
+    ctx: {
+      audience: string;
+      resource: string;
+      scope: string;
+      clientId?: string;
+      origin?: string;
+      referer?: string;
+    },
+  ): Promise<boolean> {
+    const { audience, resource, scope } = ctx;
+    if (!audience) throw new Error('audience es obligatorio');
+    if (!resource) throw new Error('resource es obligatorio');
+    if (!scope) throw new Error('scope es obligatorio');
+
+    const { accessToken } = await getAccessTokenForFrontendClient(
+      sid,
+      ctx,
+    );
+
+    const data = await umaRequest({
+      accessToken,
+      audience,
+      responseMode: 'decision',
+      permission: `${resource}#${scope}`,
+    });
+
+    return !!data?.result;
   }
 }
