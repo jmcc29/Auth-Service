@@ -1,121 +1,106 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { KeycloakEnvs, FrontEnvs } from '../config/envs';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { PENDING_STORE, SESSION_STORE } from '../session/session.module';
 import { PendingStore } from '../session/pending/pending.store';
 import { SessionStore } from '../session/store/session.store';
-import { SessionData } from '../session/session.types';
 import {
-  authorizeEndpoint,
-  tokenRequest,
-  logoutRequest,
-} from '../keycloak/kc-oidc.client';
-import { KcJwksService } from '../keycloak/kc-jwks.service';
-import {
+  ensureClientAllowed,
   resolveClientIdOrThrow,
-  randomId,
-  originOf,
-  generatePkce,
-  peekSub,
-  peekRoles,
-  peekUserProfile,
-  getAccessTokenForFrontendClient,
-  normalizeUmaPermissions,
-} from './utils';
-import { umaRequest } from 'src/keycloak/kc-uma.client';
+} from './utils/helpers/clients';
+import {
+  ensureOriginAllowedForReturnTo,
+  deriveRedirectUriFromReturnTo,
+} from './utils/helpers/clients';
+import { generatePkce } from './utils/helpers/pkce';
+import { randomId } from './utils/helpers/crypto';
+import {
+  ExchangeCodeDto,
+  ExchangeCodeResDto,
+  LoginStartDto,
+  LogoutDto,
+  LoginStartResDto,
+  GetProfileDto,
+  GetProfileRes,
+  VerifyTokenDto,
+  VerifyTokenRes,
+  GetPermissionsDto,
+  GetPermissionsRes,
+  EvaluatePermissionDto,
+  EvaluatePermissionRes,
+} from './dtos';
+import { KeycloakService } from 'src/keycloak/keycloak.service';
+import { getSecret } from './utils/oidc-client';
+import { peekRoles, peekSub, peekUserProfile } from './utils/helpers/jwt-peek';
+import { SessionData } from 'src/session/session.types';
 
-type ClientCfg = { id?: string; secret?: string };
-const ALLOWED_CLIENTS: Readonly<Record<string, { secret?: string }>> = (() => {
-  const map: Record<string, { secret?: string }> = {};
-  for (const c of KeycloakEnvs.clientList ?? [])
-    map[c.id] = { secret: c.secret };
-  const hub = KeycloakEnvs.client?.hubInterface as ClientCfg | undefined;
-  const ben = KeycloakEnvs.client?.beneficiaryInterface as
-    | ClientCfg
-    | undefined;
-  if (hub?.id) map[hub.id] = { secret: hub.secret };
-  if (ben?.id) map[ben.id] = { secret: ben.secret };
-  return Object.freeze(map);
-})();
-
-function ensureClientAllowed(clientId: string) {
-  if (!clientId || !ALLOWED_CLIENTS[clientId])
-    throw new Error(`client_id no permitido: ${clientId}`);
-}
-
-const UMA_PERMS_TTL_MS = 5 * 60 * 1000; // 
+const PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutos para state+verifier
 
 @Injectable()
 export class AuthService {
   constructor(
+    private readonly keycloak: KeycloakService,
     @Inject(PENDING_STORE) private readonly pending: PendingStore,
     @Inject(SESSION_STORE) private readonly sessions: SessionStore,
-    private readonly jwks: KcJwksService,
   ) {}
 
-  private deriveRedirectUri(returnTo: string, clientId: string) {
-    const origin = originOf(returnTo);
-    // Validación simple: que esté en la whitelist global; si quieres por cliente, añade util más estricta.
-    if (!FrontEnvs.frontendServers.includes(origin))
-      throw new Error('Origen no permitido');
-    return `${origin}/api/auth/callback`;
-  }
-
-  async buildAuthUrl({
-    returnTo,
+  async loginStartHandler({
     clientId,
-  }: {
-    returnTo: string;
-    clientId: string;
-  }) {
+    returnTo,
+  }: LoginStartDto): Promise<LoginStartResDto> {
+    // 1) Validaciones
     ensureClientAllowed(clientId);
-    const { verifier, challenge } = generatePkce();
-    const state = randomId();
-    const redirectUri = this.deriveRedirectUri(returnTo, clientId);
+    ensureOriginAllowedForReturnTo(clientId, returnTo);
 
-    await this.pending.set(state, {
-      codeVerifier: verifier,
-      clientId,
+    // 2) Derivar redirectUri
+    const redirectUri = deriveRedirectUriFromReturnTo(returnTo);
+
+    // 3) Generar PKCE + state
+    const { verifier, challenge, method } = generatePkce();
+    const state = randomId(32); // 256 bits
+
+    // 4) Guardar stash en PendingStore
+    await this.pending.set(
+      state,
+      {
+        codeVerifier: verifier,
+        clientId: clientId,
+        redirectUri,
+        returnTo: returnTo,
+        createdAt: Date.now(),
+      },
+      PENDING_TTL_MS,
+    );
+
+    // 5) Construir authUrl
+    const authUrl = this.keycloak.authorizeUrl({
+      clientId: clientId,
       redirectUri,
-      returnTo,
-      createdAt: Date.now(),
+      state,
+      pkce: { challenge, method },
     });
-
-    const url = new URL(authorizeEndpoint());
-    url.searchParams.set('client_id', clientId);
-    url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', 'openid profile email');
-    url.searchParams.set('redirect_uri', redirectUri);
-    url.searchParams.set('state', state);
-    url.searchParams.set('code_challenge', challenge);
-    url.searchParams.set('code_challenge_method', 'S256');
-
-    return { url: url.toString(), state };
+    // 6) Responder
+    return { ok: true, url: authUrl, state };
   }
 
   async exchangeCode({
     code,
     state,
     sid,
-  }: {
-    code: string;
-    state: string;
-    sid?: string;
-  }) {
+  }: ExchangeCodeDto): Promise<ExchangeCodeResDto> {
     const stash = await this.pending.take(state);
-    if (!stash) throw new Error('State no encontrado o expirado');
+    if (!stash) throw new BadRequestException('State no encontrado o expirado');
 
     const { clientId, codeVerifier, redirectUri, returnTo } = stash;
     ensureClientAllowed(clientId);
-    const secret = ALLOWED_CLIENTS[clientId]?.secret;
 
-    const data = await tokenRequest({
-      grant_type: 'authorization_code',
-      client_id: clientId,
-      ...(secret ? { client_secret: secret } : {}),
+    const clientSecret = getSecret(clientId);
+
+    const data = await this.keycloak.tokenRequest(
+      clientId,
+      clientSecret,
       code,
-      code_verifier: codeVerifier,
-      redirect_uri: redirectUri,
-    });
+      codeVerifier,
+      redirectUri,
+    );
 
     const now = Date.now();
     const expiresAt = now + (data.expires_in ?? 300) * 1000;
@@ -123,6 +108,7 @@ export class AuthService {
     const roles = peekRoles(data.access_token, clientId);
 
     const sessionId = sid ?? randomId();
+
     const existing =
       (await this.sessions.get(sessionId)) ??
       ({
@@ -140,156 +126,207 @@ export class AuthService {
       expiresAt,
       roles,
     };
+    console.log('Token:', data.access_token);
 
     await this.sessions.set(sessionId, existing);
     await this.sessions.gc();
 
-    return { sid: sessionId, returnTo };
+    return { ok: true, sid: sessionId, returnTo };
   }
 
-  async getSessionData(sid: string, clientId: string) {
-    const s = await this.sessions.get(sid);
-    if (!s) throw new Error('Sesión inválida o expirada');
-    const set = s.clients?.[clientId];
-    if (!set) throw new Error('No hay tokens para el client_id solicitado');
+  async logout({ sid }: LogoutDto) {
+    const session = await this.sessions.get(sid);
+    if (!session) return; // idempotente
 
-    return {
-      tokenType: s.tokenType,
-      sub: s.sub,
-      clientId,
-      accessToken: set.accessToken, // si no quieres exponerlo, elimínalo aquí o en el gateway
-      expiresAt: set.expiresAt,
-      roles: set.roles,
-    };
-  }
+    const entries = Object.entries(session.clients ?? {});
 
-  async verifySessionAccessToken(sid: string, clientId: string) {
-    const s = await this.sessions.get(sid);
-    if (!s) return { isValid: false };
-    const set = s.clients?.[clientId];
-    if (!set?.accessToken) return { isValid: false };
-    const allowed = Object.keys(ALLOWED_CLIENTS);
-    return this.jwks.verifyAccessToken(set.accessToken, allowed);
-  }
-
-  async logout(sid: string) {
-    const s = await this.sessions.get(sid);
-    if (!s) return;
-    try {
-      for (const [clientId, set] of Object.entries(s.clients ?? {})) {
-        if (set.refreshToken) {
-          const secret = ALLOWED_CLIENTS[clientId]?.secret;
-          await logoutRequest(set.refreshToken, { id: clientId, secret });
-        }
+    for (const [clientId, clientSet] of entries) {
+      const refresh = clientSet.refreshToken;
+      if (!refresh) continue;
+      try {
+        const secret = getSecret(clientId);
+        await this.keycloak.logoutRequest(refresh, { id: clientId, secret });
+      } catch (e) {
+        console.warn(`Logout failed for ${clientId}:`, e.message);
       }
-    } finally {
-      await this.sessions.del(sid);
     }
+    await this.sessions.del(sid);
   }
 
-  async getProfileByCtx(
-    sid: string,
-    ctx: { clientId?: string; origin?: string; referer?: string },
-  ) {
-    const { clientId } = resolveClientIdOrThrow(ctx);
-    return this.getProfile(sid, clientId); // reutiliza tu método actual
-  }
+  async getProfileByCtx(dto: GetProfileDto): Promise<GetProfileRes> {
+    // 1) Sesión
+    const session = await this.sessions.get(dto.sid);
+    if (!session) throw new BadRequestException('Sesión inválida o expirada');
 
-  async getProfile(sid: string, clientId: string) {
-    const s = await this.sessions.get(sid);
-    if (!s) throw new Error('Sesión inválida o expirada');
+    // 2) Resolver clientId (clientId > origin > referer)
+    const { clientId } = resolveClientIdOrThrow({
+      clientId: dto.clientId,
+      origin: dto.origin,
+    });
 
-    const set = s.clients?.[clientId];
-    if (!set?.accessToken)
-      throw new Error('No hay access_token para el client_id solicitado');
+    // 3) Tomar access_token del cliente
+    const set = session.clients?.[clientId];
+    if (!set?.accessToken) {
+      throw new BadRequestException(
+        `No hay access_token para el client_id solicitado (${clientId})`,
+      );
+    }
 
-    // Perfil desde el access_token
+    // 4) Armar perfil desde el access_token
     const profile = peekUserProfile(set.accessToken);
     const roles = set.roles ?? peekRoles(set.accessToken, clientId) ?? [];
-    const sub = s.sub ?? profile?.sub ?? peekSub(set.accessToken);
+    const sub = session.sub ?? profile?.sub ?? peekSub(set.accessToken);
 
     return {
-      ok: true as const,
+      ok: true,
       clientId,
-      sub,
-      username: profile?.username,
+      sub: sub || '',
+      username: profile?.username ?? profile?.preferred_username,
       name: profile?.name,
-      given_name: profile?.given_name,
-      family_name: profile?.family_name,
+      givenName: profile?.given_name,
+      familyName: profile?.family_name,
       email: profile?.email,
       roles,
     };
   }
-  /** Llama a UMA permissions (con cache por audience). */
-  async listPermissionsByCtx(
-    sid: string,
-    ctx: {
-      audience: string;
-      clientId?: string;
-      origin?: string;
-      referer?: string;
-    },
-  ): Promise<string[]> {
-    if (!ctx.audience) throw new Error('audience es obligatorio');
 
-    const { accessToken, session } = await getAccessTokenForFrontendClient(
-      sid,
-      ctx,
-    );
+  async verifyToken(dto: VerifyTokenDto): Promise<VerifyTokenRes> {
+    // 1) Sesión
+    const session = await this.sessions.get(dto.sid);
+    if (!session) throw new BadRequestException('Sesión inválida o expirada');
 
-    // Cache hit si no expiró
-    const now = Date.now();
-    const cached = session.uma?.[ctx.audience];
-    if (cached && now - cached.fetchedAt < UMA_PERMS_TTL_MS) {
-      return cached.items;
+    // 2) Resolver clientId (clientId > origin > referer)
+    const { clientId } = resolveClientIdOrThrow({
+      clientId: dto.clientId,
+      origin: dto.origin,
+    });
+
+    // 3) Tomar access_token del cliente
+    const set = session.clients?.[clientId];
+    if (!set?.accessToken) {
+      throw new BadRequestException(
+        `No hay access_token para el client_id/origin solicitado (${clientId})`,
+      );
+    }
+    // 4) Verificación criptográfica (firma/issuer/tiempos y opcionalmente azp)
+    try {
+      const checkAzp = dto.checkAzp ?? true;
+      const clockSkew = dto.clockSkewSec ?? 90;
+
+      await this.keycloak.verifyAccessToken(set.accessToken, {
+        azp: checkAzp ? clientId : undefined,
+        clockSkewSec: clockSkew,
+      });
+
+      // Si no lanza, el token es válido ahora mismo
+      return { ok: true, exists: true, isValid: true };
+    } catch (e) {
+      console.warn('Token verification failed:', e.message);
+      // Firma expirada, issuer incorrecto, azp mismatch, etc.
+      return { ok: true, exists: true, isValid: false };
+    }
+  }
+
+  async getPermissions(dto: GetPermissionsDto): Promise<GetPermissionsRes> {
+    // 1) Sesión
+    const session = await this.sessions.get(dto.sid);
+    if (!session) throw new BadRequestException('Sesión inválida o expirada');
+
+    // 2) Resolver clientId (clientId > origin > referer)
+    const { clientId } = resolveClientIdOrThrow({
+      clientId: dto.clientId,
+      origin: dto.origin,
+    });
+
+    // 3) Tomar access_token del cliente
+    const set = session.clients?.[clientId];
+    if (!set?.accessToken) {
+      throw new BadRequestException(
+        `No hay access_token para el client_id solicitado (${clientId})`,
+      );
     }
 
-    // Fetch UMA permissions
-    const raw = await umaRequest({
-      accessToken,
-      audience: ctx.audience,
+    // 4) Hacer UMA request para listar permisos
+    const data = await this.keycloak.umaRequest({
+      accessToken: set.accessToken,
+      audience: dto.audience,
       responseMode: 'permissions',
     });
 
-    const items = normalizeUmaPermissions(raw);
-
-    // Persistir en cache de la sesión
-    session.uma = session.uma ?? {};
-    session.uma[ctx.audience] = { items, fetchedAt: now };
-    await this.sessions.set(sid, session);
-
-    return items;
+    return {
+      ok: true,
+      audience: dto.audience,
+      permissions: data,
+    };
   }
 
-  /** Llama a UMA decision para `${resource}#${scope}` (sin cache o con cache muy corto si quieres). */
-  async evaluatePermissionByCtx(
-    sid: string,
-    ctx: {
-      audience: string;
-      resource: string;
-      scope: string;
-      clientId?: string;
-      origin?: string;
-      referer?: string;
-    },
-  ): Promise<boolean> {
-    const { audience, resource, scope } = ctx;
-    if (!audience) throw new Error('audience es obligatorio');
-    if (!resource) throw new Error('resource es obligatorio');
-    if (!scope) throw new Error('scope es obligatorio');
+  async evaluatePermission(
+    dto: EvaluatePermissionDto,
+  ): Promise<EvaluatePermissionRes> {
+    const { sid, origin, audience, resource, scope } = dto;
+    console.log('Evaluating permission request:', dto);
 
-    const { accessToken } = await getAccessTokenForFrontendClient(
-      sid,
-      ctx,
-    );
+    // 1) Sesión
+    const session = await this.sessions.get(dto.sid);
+    if (!session) throw new BadRequestException('Sesión inválida o expirada');
 
-    const data = await umaRequest({
-      accessToken,
-      audience,
-      responseMode: 'decision',
-      permission: `${resource}#${scope}`,
+    // 2) Resolver clientId (clientId > origin > referer)
+    const { clientId } = resolveClientIdOrThrow({
+      clientId: dto.clientId,
+      origin: dto.origin,
     });
 
-    return !!data?.result;
+    // 3) Tomar access_token del cliente
+    const set = session.clients?.[clientId];
+    if (!set?.accessToken) {
+      throw new BadRequestException(
+        `No hay access_token para el client_id solicitado (${clientId})`,
+      );
+    }
+
+    // 4) Llamar UMA en modo "decision"
+    let raw: any;
+    let granted = false;
+
+    try {
+      raw = await this.keycloak.umaRequest({
+        accessToken: set.accessToken,
+        audience,
+        responseMode: 'decision',
+        permission: `${resource}#${scope}`,
+      });
+
+      console.log('UMA raw response:', raw);
+      // Keycloak suele devolver { result: true|false }
+      granted = !!raw?.result;
+    } catch (err: any) {
+      // Aquí depende de cómo venga el error de tu cliente HTTP
+      // Ejemplo típico con axios: err.response.status === 403
+      const status = err?.response?.status ?? err?.status;
+
+      if (status === 403 || status === 401) {
+        console.log('UMA denied permission (expected):', {
+          status,
+          sid,
+          clientId,
+          audience,
+          resource,
+          scope,
+        });
+        granted = false;
+      } else {
+        console.error('UMA unexpected error:', err);
+        throw err;
+      }
+    }
+
+
+    return {
+      ok: true,
+      audience,
+      resource,
+      scope,
+      granted,
+    };
   }
 }

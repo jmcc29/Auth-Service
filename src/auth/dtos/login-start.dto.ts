@@ -8,7 +8,7 @@ export class LoginStartDto {
   clientId!: string;
 }
 
-export type LoginStartRes = {
+export type LoginStartResDto = {
   ok: true;
   url: string;
   state: string;

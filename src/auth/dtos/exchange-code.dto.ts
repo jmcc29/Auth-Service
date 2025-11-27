@@ -1,7 +1,7 @@
 // auth-service/src/auth/dtos/login-exchange.dto.ts
 import { IsOptional, IsString } from 'class-validator';
 
-export class LoginExchangeDto {
+export class ExchangeCodeDto {
   @IsString()
   code!: string;
 
@@ -13,7 +13,8 @@ export class LoginExchangeDto {
   sid?: string;
 }
 
-export interface LoginExchangeRes {
+export interface ExchangeCodeResDto {
+  ok:true;
   sid: string;
   returnTo: string;
 }

@@ -1,5 +1,5 @@
 import { IsOptional, IsString } from 'class-validator';
-export class ProfileGetDto {
+export class GetProfileDto {
   @IsString() sid!: string;
 
   @IsOptional()
@@ -9,16 +9,8 @@ export class ProfileGetDto {
   @IsOptional()
   @IsString()
   origin?: string;
-
-  @IsOptional()
-  @IsString()
-  referer?: string;
-
-  @IsOptional()
-  @IsString()
-  audience?: string;
 }
-export type ProfileGetRes = {
+export type GetProfileRes = {
   ok: true;
   clientId: string;
   sub?: string;
