@@ -1,9 +1,9 @@
 import { Global, Module } from '@nestjs/common';
-import { KcJwksService } from './kc-jwks.service';
+import { KeycloakService } from './keycloak.service';
 
 @Global()
 @Module({
-  providers: [KcJwksService],
-  exports: [KcJwksService],
+  providers: [KeycloakService],
+  exports: [KeycloakService],
 })
 export class KeycloakModule {}

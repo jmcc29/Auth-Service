@@ -1,23 +1,27 @@
 import 'dotenv/config';
 import joi from 'joi';
 
-/* ============================================================
-   AUXILIARES
-============================================================ */
-type OidcClient = { id: string; secret?: string; origins?: string[] };
+/* ================== Tipos básicos ================== */
+export type OidcClientCfg = { secret?: string; origins?: string[] };
+export type OidcClientsRecord = Record<string, OidcClientCfg>;
 
-function safeJson<T>(raw: string | undefined, fallback: T): T {
+/* ================== Helpers internos ================== */
+const uniq = <T,>(arr: T[] = []) => Array.from(new Set(arr));
+const safeJson = <T,>(raw: string | undefined, fallback: T): T => {
   if (!raw) return fallback;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
+  try { return JSON.parse(raw) as T; } catch { return fallback; }
+};
 
-function uniq<T>(arr: T[] = []): T[] {
-  return Array.from(new Set(arr));
-}
+/* ================== Esquemas JOI ================== */
+const oidcClientSchema = joi.object({
+  secret: joi.string().allow('', null),
+  origins: joi.array().items(joi.string().uri()).default([]),
+});
+
+const oidcClientsRecordSchema = joi
+  .object()
+  .pattern(/^[\w.\-:]+$/, oidcClientSchema) // claves = client_id
+  .min(1);
 
 /* ============================================================
    INTERFAZ DE VARIABLES DE ENTORNO
@@ -104,26 +108,17 @@ const envVars: EnvVars = {
   DB_SYNCHRONIZE: value.DB_SYNCHRONIZE === 'true',
 };
 
-/* ============================================================
-   PARSEO DE OIDC_CLIENTS Y FRONTENDS
-============================================================ */
-const oidcClients = safeJson<OidcClient[]>(envVars.OIDC_CLIENTS, []);
-if (!Array.isArray(oidcClients) || oidcClients.length === 0) {
-  throw new Error('OIDC_CLIENTS debe ser un arreglo JSON con al menos un cliente');
+
+/* ============ Parseo y normalización OIDC_CLIENTS ============ */
+const rawClients = safeJson<OidcClientsRecord>(value.OIDC_CLIENTS, {});
+const { error: clientsErr, value: validatedClients } = oidcClientsRecordSchema.validate(rawClients, { abortEarly: false });
+if (clientsErr) throw new Error(`OIDC_CLIENTS inválido: ${clientsErr.message}`);
+
+// normaliza origins (únicos)
+for (const cid of Object.keys(validatedClients)) {
+  const cfg = validatedClients[cid];
+  cfg.origins = uniq(cfg.origins ?? []);
 }
-
-// Normaliza y unifica origins
-for (const c of oidcClients) {
-  c.origins = uniq((c.origins ?? []).filter(Boolean));
-}
-const allOrigins = uniq(oidcClients.flatMap((c) => c.origins ?? []));
-
-// Localiza clientes conocidos
-const hub = oidcClients.find((c) => c.id === 'hub-interface');
-const ben = oidcClients.find((c) => c.id === 'beneficiary-interface');
-
-if (!hub) console.warn('[envs] ⚠️ No se encontró "hub-interface" en OIDC_CLIENTS');
-if (!ben) console.warn('[envs] ⚠️ No se encontró "beneficiary-interface" en OIDC_CLIENTS');
 
 /* ============================================================
    EXPORTS EXISTENTES (NO MODIFICADOS)
@@ -170,19 +165,7 @@ export const TestDeviceEnvs = {
 export const KeycloakEnvs = {
   authServerUrl: envVars.KEYCLOAK_URL!,
   realm: envVars.KEYCLOAK_REALM!,
-  client: {
-    hubInterface: {
-      id: hub?.id,
-      secret: hub?.secret,
-    },
-    beneficiaryInterface: {
-      id: ben?.id,
-      secret: ben?.secret,
-    },
-  },
-  clientList: oidcClients,
 };
 
-export const FrontEnvs = {
-  frontendServers: allOrigins,
-};
+/** Diccionario ya validado y normalizado de clientes OIDC */
+export const OidcClientsDict: OidcClientsRecord = validatedClients;
