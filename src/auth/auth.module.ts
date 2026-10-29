@@ -1,44 +1,40 @@
 import { DynamicModule, Module } from '@nestjs/common';
-import { JwtModule } from '@nestjs/jwt';
 import { createWebAuthConfig, WebAuthConfig } from './config/auth.config';
+import { createPvtImportAuthConfig } from './config/pvt-import-auth.config';
 import { KeycloakClient } from './oidc/keycloak-client';
 import { RedisService } from '../common/services/redis.service';
 import { PendingLoginStore } from './state/pending-login.store';
 import { SessionStore } from './session/session.store';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { WebAuthConfigToken } from './config/auth.tokens';
+import {
+  PvtImportAuthConfigToken,
+  WebAuthConfigToken,
+} from './config/auth.tokens';
 import type { WebAuthEnv } from '../config/envs';
-import { LegacyAuthController } from './legacy/legacy-auth.controller';
-import { LegacyAuthService } from './legacy/legacy-auth.service';
-import { LegacyAuthEnvs } from '../config/envs';
+import { PvtImportAuthController } from './pvt-import/pvt-import-auth.controller';
+import { PvtImportAuthService } from './pvt-import/pvt-import-auth.service';
 
 @Module({})
 export class AuthModule {
   static register(env: WebAuthEnv): DynamicModule {
     const config = createWebAuthConfig(env);
+    const pvtImportConfig = createPvtImportAuthConfig(env);
     const common = [
       { provide: WebAuthConfigToken, useValue: config },
+      { provide: PvtImportAuthConfigToken, useValue: pvtImportConfig },
       AuthService,
-      LegacyAuthService,
-    ];
-    const imports = [
-      JwtModule.register({
-        secret: LegacyAuthEnvs.jwtSecret,
-        signOptions: { expiresIn: '4h' },
-      }),
+      PvtImportAuthService,
     ];
     if (!config)
       return {
         module: AuthModule,
-        controllers: [AuthController, LegacyAuthController],
-        imports,
+        controllers: [AuthController, PvtImportAuthController],
         providers: common,
       };
     return {
       module: AuthModule,
-      controllers: [AuthController, LegacyAuthController],
-      imports,
+      controllers: [AuthController, PvtImportAuthController],
       providers: [
         ...common,
         {

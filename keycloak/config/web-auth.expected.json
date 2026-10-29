@@ -55,6 +55,16 @@
       "clientRoles": [
         "user"
       ]
+    },
+    {
+      "clientId": "pvt-document-import",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false
     }
   ],
   "requireLdap": true

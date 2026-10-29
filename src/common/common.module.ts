@@ -1,7 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { NATS_SERVICE, NastEnvs } from 'src/config';
-import { LdapService, NatsService } from 'src/common';
+import { NatsService } from 'src/common';
 @Global()
 @Module({
   imports: [
@@ -15,7 +15,7 @@ import { LdapService, NatsService } from 'src/common';
       },
     ]),
   ],
-  providers: [LdapService, NatsService],
+  providers: [NatsService],
   exports: [
     ClientsModule.register([
       {
@@ -27,7 +27,6 @@ import { LdapService, NatsService } from 'src/common';
       },
     ]),
     NatsService,
-    LdapService,
   ],
 })
 export class CommonModule {}

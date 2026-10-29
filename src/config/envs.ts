@@ -2,14 +2,6 @@ import * as joi from 'joi';
 
 interface EnvVars {
   NATS_SERVERS: string[];
-  LDAP_HOST: string;
-  LDAP_PORT: number;
-  LDAP_ADMIN_PREFIX: string;
-  LDAP_ADMIN_USERNAME: string;
-  LDAP_ADMIN_PASSWORD: string;
-  LDAP_BASEDN: string;
-  JWT_SECRET: string;
-  API_KEY: string;
   USER_TEST_DEVICE?: string;
   USER_TEST_ACCESS: boolean;
   BCB_JWT_PRIVATE_KEY?: string;
@@ -23,6 +15,8 @@ interface EnvVars {
   KEYCLOAK_PORT?: string;
   KC_HOSTNAME?: string;
   OIDC_INTERNAL_BASE_URL?: string;
+  PVT_IMPORT_CLIENT_ID?: string;
+  PVT_IMPORT_CLIENT_SECRET?: string;
   OIDC_HUB_TOOL_KEY?: string;
   OIDC_HUB_CLIENT_ID?: string;
   OIDC_HUB_CLIENT_SECRET?: string;
@@ -40,14 +34,6 @@ interface EnvVars {
 const envsSchema = joi
   .object({
     NATS_SERVERS: joi.array().items(joi.string()).required(),
-    LDAP_HOST: joi.string().required(),
-    LDAP_PORT: joi.number().required(),
-    LDAP_ADMIN_PREFIX: joi.string().required(),
-    LDAP_ADMIN_USERNAME: joi.string().required(),
-    LDAP_ADMIN_PASSWORD: joi.string().required(),
-    LDAP_BASEDN: joi.string().required(),
-    JWT_SECRET: joi.string().required(),
-    API_KEY: joi.string().required(),
     USER_TEST_DEVICE: joi.string().allow('').optional(),
     USER_TEST_ACCESS: joi.boolean().default(false),
     BCB_JWT_PRIVATE_KEY: joi.string().allow('').optional(),
@@ -61,6 +47,8 @@ const envsSchema = joi
     KEYCLOAK_PORT: joi.string().allow('').optional(),
     KC_HOSTNAME: joi.string().allow('').optional(),
     OIDC_INTERNAL_BASE_URL: joi.string().allow('').optional(),
+    PVT_IMPORT_CLIENT_ID: joi.string().allow('').optional(),
+    PVT_IMPORT_CLIENT_SECRET: joi.string().allow('').optional(),
     OIDC_HUB_TOOL_KEY: joi.string().allow('').optional(),
     OIDC_HUB_CLIENT_ID: joi.string().allow('').optional(),
     OIDC_HUB_CLIENT_SECRET: joi.string().allow('').optional(),
@@ -91,18 +79,6 @@ export const NastEnvs = {
   natsServers: envVars.NATS_SERVERS,
 };
 
-export const LegacyAuthEnvs = Object.freeze({
-  environment: envVars.ENVIRONMENT,
-  ldapHost: envVars.LDAP_HOST,
-  ldapPort: envVars.LDAP_PORT,
-  ldapAdminPrefix: envVars.LDAP_ADMIN_PREFIX,
-  ldapAdminUsername: envVars.LDAP_ADMIN_USERNAME,
-  ldapAdminPassword: envVars.LDAP_ADMIN_PASSWORD,
-  ldapBaseDn: envVars.LDAP_BASEDN,
-  jwtSecret: envVars.JWT_SECRET,
-  apiKey: envVars.API_KEY,
-});
-
 export const TestDeviceEnvs = {
   userTestDevice: envVars.USER_TEST_DEVICE,
   userTestAccess: envVars.USER_TEST_ACCESS,
@@ -123,6 +99,8 @@ export interface WebAuthEnv {
   hubPort?: string;
   callbackPath?: string;
   internalBaseUrl?: string;
+  pvtImportClientId?: string;
+  pvtImportClientSecret?: string;
   hubToolKey?: string;
   hubClientId?: string;
   hubClientSecret?: string;
@@ -147,6 +125,8 @@ export const WebAuthEnvs: Readonly<WebAuthEnv> = Object.freeze({
   hubPort: envVars.AUTH_HUB_PORT,
   callbackPath: envVars.CALLBACK_PATH,
   internalBaseUrl: envVars.OIDC_INTERNAL_BASE_URL,
+  pvtImportClientId: envVars.PVT_IMPORT_CLIENT_ID,
+  pvtImportClientSecret: envVars.PVT_IMPORT_CLIENT_SECRET,
   hubToolKey: envVars.OIDC_HUB_TOOL_KEY,
   hubClientId: envVars.OIDC_HUB_CLIENT_ID,
   hubClientSecret: envVars.OIDC_HUB_CLIENT_SECRET,

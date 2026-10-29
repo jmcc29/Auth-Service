@@ -124,8 +124,10 @@ async function main() {
     for (const field of [
       'enabled',
       'protocol',
+      'publicClient',
       'standardFlowEnabled',
       'directAccessGrantsEnabled',
+      'serviceAccountsEnabled',
       'authorizationServicesEnabled',
     ]) {
       if (Object.hasOwn(expected, field) && client[field] !== expected[field]) {

@@ -20,12 +20,21 @@ const enabled = {
   redisPort: '1',
   redisKeyPrefix: 'web',
   redisPassword: 'test-redis-password',
+  internalBaseUrl: 'http://keycloak:8080',
+  pvtImportClientId: 'pvt-document-import',
+  pvtImportClientSecret: 'pvt-secret-for-test',
+};
+
+const pvtImport = {
+  internalBaseUrl: 'http://keycloak:8080',
+  pvtImportClientId: 'pvt-document-import',
+  pvtImportClientSecret: 'pvt-secret-for-test',
 };
 
 describe('AuthModule isolation', () => {
   it('initializes while disabled without Redis configuration', async () => {
     const module = await Test.createTestingModule({
-      imports: [AuthModule.register({ enabled: false })],
+      imports: [AuthModule.register({ enabled: false, ...pvtImport })],
     }).compile();
     await expect(module.init()).resolves.toBeDefined();
     const controller = module.get(AuthController);
