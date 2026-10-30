@@ -121,16 +121,20 @@ async function main() {
     }
 
     const client = matches[0];
-    for (const field of [
+    const booleanFields = new Set([
       'enabled',
-      'protocol',
       'publicClient',
       'standardFlowEnabled',
       'directAccessGrantsEnabled',
       'serviceAccountsEnabled',
       'authorizationServicesEnabled',
-    ]) {
-      if (Object.hasOwn(expected, field) && client[field] !== expected[field]) {
+    ]);
+    for (const field of ['protocol', ...booleanFields]) {
+      if (!Object.hasOwn(expected, field)) continue;
+      const actual = booleanFields.has(field)
+        ? client[field] === true
+        : client[field];
+      if (actual !== expected[field]) {
         problems.push(`client ${expected.clientId} has unexpected ${field}`);
       }
     }
